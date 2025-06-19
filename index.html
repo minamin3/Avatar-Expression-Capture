@@ -1,0 +1,92 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Avatar Expression Scaling</title>
+    <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.module.js';
+    import { VRM, VRMLoaderPlugin } from 'https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@1.0.6/lib/three-vrm.module.js';
+    import * as faceLandmarksDetection from 'https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection';
+    import '@tensorflow/tfjs-backend-webgl';
+
+    let currentScale = 1.0;
+    const mode = new URLSearchParams(window.location.search).get("mode");
+    if (mode === "damped") currentScale = 0.5;
+    else if (mode === "exaggerated") currentScale = 2.0;
+
+    let renderer, scene, camera, avatar;
+
+    async function init() {
+      // Basic setup
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(0, 1.4, 2.5);
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      // Light
+      const light = new THREE.DirectionalLight(0xffffff, 1);
+      light.position.set(1, 1, 1);
+      scene.add(light);
+
+      // Load VRM
+      const loader = new THREE.GLTFLoader();
+      loader.register((parser) => new VRMLoaderPlugin(parser));
+      loader.load('./model.vrm', (gltf) => {
+        avatar = gltf.userData.vrm;
+        scene.add(avatar.scene);
+      });
+
+      animate();
+      await detectFace();
+    }
+
+    async function detectFace() {
+      const model = await faceLandmarksDetection.load(
+        faceLandmarksDetection.SupportedPackages.mediapipeFacemesh
+      );
+
+      const video = document.createElement("video");
+      video.autoplay = true;
+      video.width = 640;
+      video.height = 480;
+      document.body.appendChild(video);
+
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream;
+
+      async function render() {
+        const faces = await model.estimateFaces({ input: video });
+        if (faces.length > 0 && avatar) {
+          const mouthOpen = faces[0].annotations.lipsUpperInner[5][1] - faces[0].annotations.lipsLowerInner[5][1];
+          const value = Math.min(Math.max(mouthOpen * currentScale * 5, 0), 1);
+
+          const blendShapeProxy = avatar.blendShapeProxy;
+          if (blendShapeProxy) {
+            blendShapeProxy.setValue('A', value);
+          }
+        }
+        requestAnimationFrame(render);
+      }
+      render();
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      renderer.render(scene, camera);
+    }
+
+    init();
+    </script>
+</head>
+<body style="margin: 0; overflow: hidden">
+    <div style="position: absolute; top: 10px; left: 10px; background: white; padding: 5px; z-index: 10">
+        <strong>Mode:</strong> <span id="mode-display"></span>
+    </div>
+    <script>
+    document.getElementById("mode-display").textContent = new URLSearchParams(location.search).get("mode") || "neutral";
+    </script>
+</body>
+</html>
